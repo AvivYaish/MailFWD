@@ -15,9 +15,9 @@ import msal
 from msal_extensions import PersistedTokenCache, build_encrypted_persistence
 from msal_extensions.persistence import PersistenceDecryptionError
 
-CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"  # Thunderbird
+CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"  # Thunderbird ID
 ROOT = Path(__file__).resolve().parent
-STATE = ROOT / "MailFWD.json"
+STATE = ROOT / "MailFWD.json"  # Save encrypted authentication info within a json file
 SCOPE = ["https://outlook.office.com/IMAP.AccessAsUser.All", "https://outlook.office.com/SMTP.Send"]
 
 
