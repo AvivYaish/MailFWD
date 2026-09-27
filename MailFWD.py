@@ -17,7 +17,7 @@ from msal_extensions.persistence import PersistenceDecryptionError
 
 CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"  # Thunderbird ID
 ROOT = Path(__file__).resolve().parent
-STATE = ROOT / "MailFWD.json"  # Save encrypted authentication info within a json file
+STATE = ROOT / "MailFWD.json"  # Save encrypted authentication info in MailFWD.json
 SCOPE = ["https://outlook.office.com/IMAP.AccessAsUser.All", "https://outlook.office.com/SMTP.Send"]
 
 
@@ -31,12 +31,11 @@ def checked(command, *args):
 def credentials(account, state, login=False):
     path = ROOT / ".login.bin"
     if not path.exists() and "login" in state:
-        temporary = path.with_suffix(".tmp")
-        temporary.write_bytes(b64decode(state["login"], validate=True))
-        temporary.replace(path)
+        path_tmp = path.with_suffix(".tmp")
+        path_tmp.write_bytes(b64decode(state["login"], validate=True))
+        path_tmp.replace(path)
     cache = PersistedTokenCache(build_encrypted_persistence(str(path)))
-    app = msal.PublicClientApplication(CLIENT_ID, token_cache=cache,
-                                      authority=state.get("authority", "https://login.microsoftonline.com/organizations"))
+    app = msal.PublicClientApplication(CLIENT_ID, token_cache=cache, authority=state.get("authority", "https://login.microsoftonline.com/organizations"))
     accounts = app.get_accounts(username=account)
     result = app.acquire_token_silent(SCOPE, account=accounts[0]) if accounts and not login else None
     if not result or "access_token" not in result:
@@ -53,9 +52,9 @@ def credentials(account, state, login=False):
         state["login"] = b64encode(path.read_bytes()).decode("ascii")
         state.pop("flows", None)
         state.pop("sent", None)
-        temporary = STATE.with_suffix(".tmp")
-        temporary.write_text(json.dumps(state), encoding="utf-8")
-        temporary.replace(STATE)
+        path_tmp = STATE.with_suffix(".tmp")
+        path_tmp.write_text(json.dumps(state), encoding="utf-8")
+        path_tmp.replace(STATE)
         path.unlink()
     return result["access_token"]
 
@@ -84,7 +83,7 @@ def prepare_forward(message, account, recipient):
         "Reply-To": ", ".join(map(formataddr, reply)), "Cc": ", ".join(cc.values()),
         "In-Reply-To": message_id, "References": " ".join(references.splitlines()).strip(),
     }
-    # Keep the original MIME payload intact, replacing only its outer headers.
+    # Replace only outer MIME headers
     for name in message.keys():
         if not (name.lower().startswith("content-") or name.lower() == "mime-version"):
             del message[name]
@@ -109,7 +108,7 @@ def parse_time(value):
             raise ValueError
         return datetime.strptime(value, "%Y%m%d%H%M").astimezone()
     except ValueError:
-        raise argparse.ArgumentTypeError("Use a valid local time in YYYYMMDDHHMM format.")
+        raise argparse.ArgumentTypeError("Use valid YYYYMMDDHHMM format.")
 
 
 def forward_mail(account, recipients, token, after=None, verbose=False):
@@ -158,13 +157,13 @@ def forward_mail(account, recipients, token, after=None, verbose=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Forward unread Inbox mail, or all Inbox mail after a local time.")
+    parser = argparse.ArgumentParser(description="Forward unread Inbox mail or all Inbox mail after some local time.")
     parser.add_argument("--from", dest="account", required=True, metavar="ADDRESS", help="Source login address")
     parser.add_argument("--to", nargs="+", required=True, metavar="ADDRESS",
                         type=lambda value: value if "@" in value else parse_time(value),
-                        help="recipients, optionally followed by YYYYMMDDHHMM (local time)")
+                        help="recipients, optionally followed by a local time YYYYMMDDHHMM")
     parser.add_argument("--login", action="store_true", help="sign in again")
-    parser.add_argument("--verbose", action="store_true", help="print each forward's sender, subject and received time")
+    parser.add_argument("--verbose", action="store_true", help="print each forward's sender, subject, and received time")
     args = parser.parse_args()
     after = args.to.pop() if isinstance(args.to[-1], datetime) else None
     if not args.to:
@@ -172,7 +171,6 @@ def main():
     for address in [args.account, *args.to]:
         if not isinstance(address, str) or not re.fullmatch(r"[^\s@<>,;]+@[^\s@<>,;]+", address):
             raise ValueError(f"Invalid email address: {address}")
-    # SQLite provides a crash-safe process lock on Windows, macOS and Linux.
     with closing(sqlite3.connect(ROOT / ".sync.lock", timeout=0)) as lock:
         lock.execute("BEGIN EXCLUSIVE")
         state = json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
@@ -189,9 +187,8 @@ if __name__ == "__main__":
     except (RuntimeError, ValueError) as error:
         raise SystemExit(str(error))
     except smtplib.SMTPAuthenticationError as error:
-        raise SystemExit(f"Source rejected SMTP sign-in ({error.smtp_code}), check whether it permits SMTP AUTH for your account.")
+        raise SystemExit(f"Source rejected SMTP sign-in ({error.smtp_code}), check if it permits SMTP AUTH for account.")
     except PersistenceDecryptionError:
-        raise SystemExit("Cannot decrypt saved sign-in. Run Dagu under the same Windows account and profile "
-                         "used to sign in, on the same computer. --login cannot unlock this cache.")
+        raise SystemExit("Cannot decrypt saved sign-in, --login cannot unlock this cache.")
     except Exception as error:
-        raise SystemExit(f"Stopped ({type(error).__name__}). Check settings, credentials and account access.")
+        raise SystemExit(f"Stopped ({type(error).__name__}), check settings, credentials, and account access.")
