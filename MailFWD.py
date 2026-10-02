@@ -1,4 +1,8 @@
-"""Forward unread Inbox mail and mark it read."""
+"""
+Forward unread Inbox mail and mark it read.
+Add a forwarding source using: `python MailFWD.py --from SOURCE --to TARGET --login AUTHORITY`
+Later runs reuse the source address's saved authority and do not need --login.
+"""
 import argparse, imaplib, json, re, smtplib, sqlite3, ssl
 from base64 import b64decode, b64encode
 from contextlib import closing
@@ -28,14 +32,17 @@ def checked(command, *args):
     return data
 
 
-def credentials(account, state, login=False):
+def credentials(account, state, login=None):
+    authority = login or state.get("authorities", {}).get(account.lower())
+    if not authority:
+        raise ValueError(f"No saved authority for {account}; use --login AUTHORITY.")
     path = ROOT / ".login.bin"
     if not path.exists() and "login" in state:
         path_tmp = path.with_suffix(".tmp")
         path_tmp.write_bytes(b64decode(state["login"], validate=True))
         path_tmp.replace(path)
     cache = PersistedTokenCache(build_encrypted_persistence(str(path)))
-    app = msal.PublicClientApplication(CLIENT_ID, token_cache=cache, authority=state.get("authority", "https://login.microsoftonline.com/organizations"))
+    app = msal.PublicClientApplication(CLIENT_ID, token_cache=cache, authority=authority)
     accounts = app.get_accounts(username=account)
     result = app.acquire_token_silent(SCOPE, account=accounts[0]) if accounts and not login else None
     if not result or "access_token" not in result:
@@ -50,8 +57,7 @@ def credentials(account, state, login=False):
             raise RuntimeError("Sign in with the requested login name.")
     if path.exists():
         state["login"] = b64encode(path.read_bytes()).decode("ascii")
-        state.pop("flows", None)
-        state.pop("sent", None)
+        state.setdefault("authorities", {})[account.lower()] = authority
         path_tmp = STATE.with_suffix(".tmp")
         path_tmp.write_text(json.dumps(state), encoding="utf-8")
         path_tmp.replace(STATE)
@@ -162,7 +168,8 @@ def main():
     parser.add_argument("--to", nargs="+", required=True, metavar="ADDRESS",
                         type=lambda value: value if "@" in value else parse_time(value),
                         help="recipients, optionally followed by a local time YYYYMMDDHHMM")
-    parser.add_argument("--login", action="store_true", help="sign in again")
+    parser.add_argument("--login", metavar="AUTHORITY",
+                        help="sign in again using this Microsoft authority URL; save it for --from")
     parser.add_argument("--verbose", action="store_true", help="print each forward's sender, subject, and received time")
     args = parser.parse_args()
     after = args.to.pop() if isinstance(args.to[-1], datetime) else None
